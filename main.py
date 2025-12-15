@@ -1,8 +1,8 @@
+import requests
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
-
 
 # SQLite database file
 SQLALCHEMY_DATABASE_URL = "sqlite:///./notes.db"
@@ -53,6 +53,12 @@ class NoteOut(BaseModel):
 
     class Config:
         orm_mode = True  
+
+class NoteSummary(BaseModel):
+    id: int
+    title: str
+    content: str
+    summary: str
 
 
 # FastAPI app & DB dependency
@@ -126,3 +132,64 @@ def delete_note(note_id: int, db: Session = Depends(get_db)):
     db.delete(note)
     db.commit()
     return {"detail": "Note deleted"}
+
+# SUMMARIZE a note using Ollama
+@app.post("/notes/{note_id}/summarize", response_model=NoteSummary)
+def summarize_note(note_id: int, db: Session = Depends(get_db)):
+    # 1. Get the note from the database
+    note = db.query(Note).filter(Note.id == note_id).first()
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    # 2. Build a prompt for Ollama
+    prompt = f"""
+    You are a helpful assistant.
+
+    Please summarize the following note in 3–5 clear bullet points.
+    Focus on the main ideas and keep the language simple.
+
+    Note content:
+    {note.content}
+    """
+
+    # 3. Call Ollama's local API
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "llama3",   # change if you use a different model
+                "prompt": prompt,
+                "stream": False      # easier to handle for beginners
+            },
+            timeout=60,
+        )
+    except requests.exceptions.RequestException as e:
+        # Network / connection error
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error connecting to Ollama: {e}"
+        )
+
+    if response.status_code != 200:
+        # Ollama returned an error
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ollama error: {response.text}"
+        )
+
+    data = response.json()
+    summary_text = data.get("response", "").strip()
+
+    if not summary_text:
+        raise HTTPException(
+            status_code=500,
+            detail="No summary returned from Ollama."
+        )
+
+    # 4. Return original note + summary
+    return NoteSummary(
+        id=note.id,
+        title=note.title,
+        content=note.content,
+        summary=summary_text,
+    )
