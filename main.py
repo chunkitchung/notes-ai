@@ -1,8 +1,14 @@
+import json
+import os
 import requests
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from pypdf import PdfReader
+from docx import Document
+
 
 # SQLite database file
 SQLALCHEMY_DATABASE_URL = "sqlite:///./notes.db"
@@ -143,8 +149,6 @@ def summarize_note(note_id: int, db: Session = Depends(get_db)):
 
     # 2. Build a prompt for Ollama
     prompt = f"""
-    You are a helpful assistant.
-
     Please summarize the following note in 3–5 clear bullet points.
     Focus on the main ideas and keep the language simple.
 
@@ -157,9 +161,9 @@ def summarize_note(note_id: int, db: Session = Depends(get_db)):
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "llama3",   # change if you use a different model
+                "model": "llama3",  
                 "prompt": prompt,
-                "stream": False      # easier to handle for beginners
+                "stream": False      
             },
             timeout=60,
         )
